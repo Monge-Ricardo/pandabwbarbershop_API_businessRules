@@ -1,8 +1,9 @@
 import uuid
+import httpx
 from fastapi import APIRouter, HTTPException, status, Depends
 from typing import Optional
 from app.clients.crud_client import crud_client
-from app.models.schemas.auth_schema import RegisterRequest, LoginRequest, TokenResponse
+from app.models.schemas.auth_schema import RegisterRequest, LoginRequest, TokenResponse, GoogleLoginRequest
 from app.middleware.auth import hash_password, verify_password, create_access_token, get_current_user, resolve_user_role
 
 router = APIRouter(tags=["Authentication & Sessions"])
@@ -109,3 +110,83 @@ async def destroy_session(current_user: dict = Depends(get_current_user)):
     """
     # For a JWT implementation, invalidation happens on the client side (discarding the token).
     return None
+
+@router.post("/auth/google", response_model=TokenResponse)
+async def google_auth(body: GoogleLoginRequest):
+    """
+    Autentica a un usuario mediante Google OAuth (Bridge).
+    Valida el id_token con la API de Google, registra al usuario si no existe,
+    y devuelve un token de acceso JWT del sistema.
+    """
+    token_info_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={body.id_token}"
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.get(token_info_url, timeout=5.0)
+            if res.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token de Google inválido o expirado."
+                )
+            payload = res.json()
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"No se pudo conectar con el servicio de autenticación de Google: {str(exc)}"
+            )
+
+    email = payload.get("email")
+    name = payload.get("name", "Usuario de Google")
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El token de Google no contiene un correo electrónico."
+        )
+
+    # Buscar si el usuario ya existe en nuestra base de datos
+    existing = await crud_client.list_users(email=email)
+    
+    if existing:
+        # El usuario existe, obtenemos sus datos
+        user_profile = existing[0]
+        user_uuid = user_profile["id"]
+    else:
+        # El usuario no existe, lo registramos automáticamente con el rol predeterminado de customer
+        user_uuid = str(uuid.uuid4())
+        # Contraseña segura aleatoria para la base de datos auth
+        random_pass = str(uuid.uuid4())
+        hashed_pass = hash_password(random_pass)
+        
+        try:
+            # 1. Crear credenciales en auth schema
+            await crud_client.create_auth_user(id=user_uuid, email=email, encrypted_password=hashed_pass)
+            
+            # 2. Crear perfil en public schema
+            user_profile = await crud_client.create_user(id=user_uuid, full_name=name, email=email)
+        except Exception as e:
+            # Intentar limpiar en caso de fallo
+            try:
+                await crud_client.delete_auth_user(user_uuid)
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error durante el registro automático con Google: {str(e)}"
+            )
+
+    # Resolver rol (defaults a customer si no tiene barbershop memberships)
+    role = await resolve_user_role(user_uuid)
+    
+    # Generar nuestro token local del sistema
+    token = create_access_token(data={"sub": user_uuid, "role": role})
+    
+    return {
+        "message": "Sesión iniciada correctamente con Google",
+        "token": token,
+        "user": {
+            "id": user_uuid,
+            "name": user_profile.get("full_name") or name,
+            "email": email
+        }
+    }

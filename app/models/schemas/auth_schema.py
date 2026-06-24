@@ -13,3 +13,7 @@ class TokenResponse(BaseModel):
     message: str
     token: str
     user: dict
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+

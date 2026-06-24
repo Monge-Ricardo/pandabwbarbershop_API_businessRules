@@ -21,7 +21,7 @@ async def check_is_barbershop_owner(user_id: str, barbershop_id: str):
 # --- BARBERSHOP ENDPOINTS ---
 
 @router.get("/barbershops", response_model=List[BarbershopResponse])
-async def list_barbershops():
+async def list_barbershops(current_user: dict = Depends(get_current_user)):
     """
     Lista todas las barberías registradas en la plataforma.
     """
@@ -63,7 +63,7 @@ async def create_barbershop(body: BarbershopCreate, current_user: dict = Depends
     return new_shop
 
 @router.get("/barbershops/{shop_id}", response_model=BarbershopResponse)
-async def get_barbershop_details(shop_id: str):
+async def get_barbershop_details(shop_id: str, current_user: dict = Depends(get_current_user)):
     """
     Obtiene detalles específicos de una barbería.
     """

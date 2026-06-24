@@ -19,7 +19,7 @@ async def check_is_barbershop_member(user_id: str, barbershop_id: str):
         )
 
 @router.get("/services", response_model=List[ServiceResponse])
-async def list_global_services():
+async def list_global_services(current_user: dict = Depends(get_current_user)):
     """
     Obtiene la lista de todos los servicios registrados en todo el sistema.
     """
@@ -38,7 +38,7 @@ async def list_global_services():
     ]
 
 @router.get("/barbershops/{shop_id}/services", response_model=List[ServiceResponse])
-async def list_shop_services(shop_id: str):
+async def list_shop_services(shop_id: str, current_user: dict = Depends(get_current_user)):
     """
     Obtiene todos los servicios ofrecidos por una barbería específica.
     """

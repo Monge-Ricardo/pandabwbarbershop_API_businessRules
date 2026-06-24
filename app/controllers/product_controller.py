@@ -8,7 +8,7 @@ from app.controllers.service_controller import check_is_barbershop_member
 router = APIRouter(tags=["Products"])
 
 @router.get("/barbershops/{shop_id}/products", response_model=List[ProductResponse])
-async def list_shop_products(shop_id: str):
+async def list_shop_products(shop_id: str, current_user: dict = Depends(get_current_user)):
     """
     Obtiene la lista de productos de una barbería específica (HU19).
     """

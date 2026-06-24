@@ -16,7 +16,7 @@ async def check_can_manage_availability(current_user: dict, barber_id: str):
         )
 
 @router.get("/{barber_id}/availabilities", response_model=List[AvailabilityResponse])
-async def list_barber_availabilities(barber_id: str):
+async def list_barber_availabilities(barber_id: str, current_user: dict = Depends(get_current_user)):
     """
     Lista la disponibilidad registrada para un barbero específico (HU21).
     """

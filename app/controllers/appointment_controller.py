@@ -109,10 +109,10 @@ async def list_appointments(
     """
     Lista las citas registradas en el sistema. Filtra según rol y parámetros provistos (HU23 / HU24).
     """
-    # Owners can list all. Clients and barbers can only list their own unless filtered.
-    role = current_user.get("role", "client").lower()
+    # Owners can list all. Customers and barbers can only list their own unless filtered.
+    role = current_user.get("role", "customer").lower()
     
-    if role == "client":
+    if role == "customer":
         client_id = current_user["id"]
     elif role == "barber":
         barber_id = current_user["id"]
@@ -145,8 +145,8 @@ async def create_appointment(body: AppointmentCreate, current_user: dict = Depen
     Crea una nueva cita (reserva). Valida disponibilidad y colisiones de horarios (HU20 / HU28).
     """
     # Enforce that client_id matches the logged-in user unless the caller is an owner/barber
-    role = current_user.get("role", "client").lower()
-    if role == "client" and body.client_id != current_user["id"]:
+    role = current_user.get("role", "customer").lower()
+    if role == "customer" and body.client_id != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para agendar citas para otro cliente."
@@ -212,8 +212,8 @@ async def get_appointment_details(appointment_id: str, current_user: dict = Depe
         )
 
     # Enforce reading permissions
-    role = current_user.get("role", "client").lower()
-    if role == "client" and app["client_id"] != current_user["id"]:
+    role = current_user.get("role", "customer").lower()
+    if role == "customer" and app["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para ver esta cita."
@@ -248,8 +248,8 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
             detail="Cita no encontrada."
         )
 
-    role = current_user.get("role", "client").lower()
-    if role == "client" and app["client_id"] != current_user["id"]:
+    role = current_user.get("role", "customer").lower()
+    if role == "customer" and app["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para modificar esta cita."
@@ -329,8 +329,8 @@ async def cancel_appointment(appointment_id: str, current_user: dict = Depends(g
             detail="Cita no encontrada."
         )
 
-    role = current_user.get("role", "client").lower()
-    if role == "client" and app["client_id"] != current_user["id"]:
+    role = current_user.get("role", "customer").lower()
+    if role == "customer" and app["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para cancelar esta cita."

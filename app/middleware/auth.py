@@ -39,7 +39,7 @@ async def resolve_user_role(user_id: str) -> str:
     """
     Resolves the system role of a user.
     If the user has a barbershop membership with role 'owner' or 'barber', returns that.
-    Otherwise, defaults to 'client'.
+    Otherwise, defaults to 'customer'.
     """
     memberships = await crud_client.list_members(user_id=user_id)
     if memberships:
@@ -51,7 +51,7 @@ async def resolve_user_role(user_id: str) -> str:
         for m in memberships:
             if m["role"].upper() == "BARBER":
                 return "barber"
-    return "client"
+    return "customer"
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     """
@@ -106,7 +106,7 @@ def require_role(allowed_roles: List[str]):
     FastAPI dependency to restrict endpoints to specific roles.
     """
     async def dependency(current_user: dict = Depends(get_current_user)):
-        role = current_user.get("role", "client").lower()
+        role = current_user.get("role", "customer").lower()
         if role not in [r.lower() for r in allowed_roles]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
