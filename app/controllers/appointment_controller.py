@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List, Optional
 from datetime import datetime, date, time
@@ -22,7 +23,7 @@ def parse_time_str(t_val) -> time:
         return time(int(parts[0]), int(parts[1]))
     if isinstance(t_val, datetime):
         return t_val.time()
-    raise ValueError(f"No se pudo parsear el valor de tiempo: {t_val}")
+    raise ValueError(f"Could not parse time value: {t_val}")
 
 def parse_date_str(d_val) -> date:
     """Helper to convert date value to datetime.date."""
@@ -32,9 +33,65 @@ def parse_date_str(d_val) -> date:
         return datetime.strptime(d_val.split("T")[0], "%Y-%m-%d").date()
     if isinstance(d_val, datetime):
         return d_val.date()
-    raise ValueError(f"No se pudo parsear el valor de fecha: {d_val}")
+    raise ValueError(f"Could not parse date value: {d_val}")
 
-# --- BUSINESS LOGIC VALDATIONS ---
+async def _verify_active_barber_member(barbershop_id: str, barber_id: str) -> None:
+    members = await crud_client.list_members(barbershop_id=barbershop_id, user_id=barber_id)
+    if not members or members[0]["role"].upper() != "BARBER" or members[0]["status"] != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El barbero especificado no es un miembro activo de esta barbería."
+        )
+
+async def _verify_barber_availability(
+    barber_id: str, 
+    barbershop_id: str, 
+    app_date: date, 
+    start_time: time, 
+    end_time: time
+) -> None:
+    day_of_week = app_date.isoweekday() # Monday=1, ..., Sunday=7
+    availabilities = await crud_client.list_availabilities(barber_id=barber_id, barbershop_id=barbershop_id)
+    
+    matching_availability = None
+    for availability in availabilities:
+        if availability["day_of_week"] == day_of_week and availability["is_available"]:
+            availability_start = parse_time_str(availability["start_time"])
+            availability_end = parse_time_str(availability["end_time"])
+            if availability_start <= start_time and end_time <= availability_end:
+                matching_availability = availability
+                break
+
+    if not matching_availability:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"El barbero no está disponible en este horario. Día de la semana: {day_of_week}."
+        )
+
+async def _verify_no_overlap(
+    barber_id: str, 
+    app_date: date, 
+    start_time: time, 
+    end_time: time
+) -> None:
+    existing_appointments = await crud_client.list_appointments(
+        barber_id=barber_id,
+        appointment_date=str(app_date)
+    )
+
+    for appointment in existing_appointments:
+        if appointment["status"] == "cancelled":
+            continue
+            
+        existing_start = parse_time_str(appointment["start_time"])
+        existing_end = parse_time_str(appointment["end_time"])
+
+        # Overlap condition: start1 < end2 AND start2 < end1
+        if start_time < existing_end and existing_start < end_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Conflicto de horario: El barbero ya tiene una cita agendada que coincide con este rango."
+            )
 
 async def validate_appointment_rules(
     barbershop_id: str,
@@ -49,52 +106,20 @@ async def validate_appointment_rules(
     2. Que el horario esté dentro de la disponibilidad del barbero (HU21).
     3. Que no haya colisiones de horario / doble agenda para el barbero (HU28).
     """
-    # 1. Active member check
-    members = await crud_client.list_members(barbershop_id=barbershop_id, user_id=barber_id)
-    if not members or members[0]["role"].upper() != "BARBER" or members[0]["status"] != "active":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El barbero especificado no es un miembro activo de esta barbería."
-        )
-
-    # 2. Availability check (HU21)
-    day_of_week = app_date.isoweekday() # Monday=1, ..., Sunday=7
-    availabilities = await crud_client.list_availabilities(barber_id=barber_id, barbershop_id=barbershop_id)
-    
-    matching_av = None
-    for av in availabilities:
-        if av["day_of_week"] == day_of_week and av["is_available"]:
-            av_start = parse_time_str(av["start_time"])
-            av_end = parse_time_str(av["end_time"])
-            if av_start <= start_time and end_time <= av_end:
-                matching_av = av
-                break
-
-    if not matching_av:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"El barbero no está disponible en este horario. Día de la semana: {day_of_week}."
-        )
-
-    # 3. Overlap check / Double-booking prevention (HU28)
-    existing_appointments = await crud_client.list_appointments(
+    await _verify_active_barber_member(barbershop_id=barbershop_id, barber_id=barber_id)
+    await _verify_barber_availability(
         barber_id=barber_id,
-        appointment_date=str(app_date)
+        barbershop_id=barbershop_id,
+        app_date=app_date,
+        start_time=start_time,
+        end_time=end_time
     )
-
-    for app in existing_appointments:
-        if app["status"] == "cancelled":
-            continue
-            
-        existing_start = parse_time_str(app["start_time"])
-        existing_end = parse_time_str(app["end_time"])
-
-        # Overlap condition: start1 < end2 AND start2 < end1
-        if start_time < existing_end and existing_start < end_time:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Conflicto de horario: El barbero ya tiene una cita agendada que coincide con este rango."
-            )
+    await _verify_no_overlap(
+        barber_id=barber_id,
+        app_date=app_date,
+        start_time=start_time,
+        end_time=end_time
+    )
 
 # --- APPOINTMENTS ENDPOINTS ---
 
@@ -162,7 +187,7 @@ async def create_appointment(body: AppointmentCreate, current_user: dict = Depen
     )
 
     # Create the appointment
-    new_app = await crud_client.create_appointment(
+    new_appointment = await crud_client.create_appointment(
         barbershop_id=body.barbershop_id,
         client_id=body.client_id,
         barber_id=body.barber_id,
@@ -176,27 +201,27 @@ async def create_appointment(body: AppointmentCreate, current_user: dict = Depen
     if body.service_id:
         try:
             await crud_client.create_appointment_service(
-                appointment_id=new_app["id"],
+                appointment_id=new_appointment["id"],
                 service_id=body.service_id
             )
-        except Exception as e:
+        except (httpx.HTTPStatusError, RuntimeError) as api_error:
             # Cleanup appointment on failure to link service
-            await crud_client.delete_appointment(new_app["id"])
+            await crud_client.delete_appointment(new_appointment["id"])
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al vincular el servicio de la cita: {str(e)}"
+                detail=f"Error al vincular el servicio de la cita: {str(api_error)}"
             )
 
     return {
-        "appointment_id": new_app["id"],
-        "barber_id": new_app["barber_id"],
-        "client_id": new_app["client_id"],
-        "appointment_date": parse_date_str(new_app["appointment_date"]),
-        "status": new_app["status"] or "pending",
-        "notes": new_app["notes"],
-        "start_time": parse_time_str(new_app["start_time"]),
-        "end_time": parse_time_str(new_app["end_time"]),
-        "barbershop_id": new_app["barbershop_id"]
+        "appointment_id": new_appointment["id"],
+        "barber_id": new_appointment["barber_id"],
+        "client_id": new_appointment["client_id"],
+        "appointment_date": parse_date_str(new_appointment["appointment_date"]),
+        "status": new_appointment["status"] or "pending",
+        "notes": new_appointment["notes"],
+        "start_time": parse_time_str(new_appointment["start_time"]),
+        "end_time": parse_time_str(new_appointment["end_time"]),
+        "barbershop_id": new_appointment["barbershop_id"]
     }
 
 @router.get("/appointments/{appointment_id}", response_model=AppointmentResponse)
@@ -204,8 +229,8 @@ async def get_appointment_details(appointment_id: str, current_user: dict = Depe
     """
     Obtiene los detalles de una cita.
     """
-    app = await crud_client.get_appointment(appointment_id)
-    if not app:
+    appointment = await crud_client.get_appointment(appointment_id)
+    if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cita no encontrada."
@@ -213,27 +238,27 @@ async def get_appointment_details(appointment_id: str, current_user: dict = Depe
 
     # Enforce reading permissions
     role = current_user.get("role", "customer").lower()
-    if role == "customer" and app["client_id"] != current_user["id"]:
+    if role == "customer" and appointment["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para ver esta cita."
         )
-    if role == "barber" and app["barber_id"] != current_user["id"]:
+    if role == "barber" and appointment["barber_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para ver esta cita."
         )
 
     return {
-        "appointment_id": app["id"],
-        "barber_id": app["barber_id"],
-        "client_id": app["client_id"],
-        "appointment_date": parse_date_str(app["appointment_date"]),
-        "status": app["status"] or "pending",
-        "notes": app["notes"],
-        "start_time": parse_time_str(app["start_time"]),
-        "end_time": parse_time_str(app["end_time"]),
-        "barbershop_id": app["barbershop_id"]
+        "appointment_id": appointment["id"],
+        "barber_id": appointment["barber_id"],
+        "client_id": appointment["client_id"],
+        "appointment_date": parse_date_str(appointment["appointment_date"]),
+        "status": appointment["status"] or "pending",
+        "notes": appointment["notes"],
+        "start_time": parse_time_str(appointment["start_time"]),
+        "end_time": parse_time_str(appointment["end_time"]),
+        "barbershop_id": appointment["barbershop_id"]
     }
 
 @router.put("/appointments/{appointment_id}", response_model=AppointmentResponse)
@@ -241,15 +266,15 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
     """
     Modifica una cita existente. Si se modifica la fecha/hora, valida las reglas de disponibilidad y colisiones (HU25).
     """
-    app = await crud_client.get_appointment(appointment_id)
-    if not app:
+    appointment = await crud_client.get_appointment(appointment_id)
+    if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cita no encontrada."
         )
 
     role = current_user.get("role", "customer").lower()
-    if role == "customer" and app["client_id"] != current_user["id"]:
+    if role == "customer" and appointment["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para modificar esta cita."
@@ -257,9 +282,9 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
 
     # Check if rescheduling requires validating rules
     reschedule_needed = False
-    new_date = parse_date_str(app["appointment_date"])
-    new_start = parse_time_str(app["start_time"])
-    new_end = parse_time_str(app["end_time"])
+    new_date = parse_date_str(appointment["appointment_date"])
+    new_start = parse_time_str(appointment["start_time"])
+    new_end = parse_time_str(appointment["end_time"])
 
     if body.appointment_date is not None and body.appointment_date != new_date:
         new_date = body.appointment_date
@@ -273,8 +298,8 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
 
     if reschedule_needed:
         await validate_appointment_rules(
-            barbershop_id=app["barbershop_id"],
-            barber_id=app["barber_id"],
+            barbershop_id=appointment["barbershop_id"],
+            barber_id=appointment["barber_id"],
             app_date=new_date,
             start_time=new_start,
             end_time=new_end
@@ -282,7 +307,7 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
 
     update_data = {}
     if body.status is not None:
-        # Barbero o Dueño pueden aceptar/cancelar/completar cita (HU25)
+        # Barber or Owner can accept/cancel/complete appointment (HU25)
         update_data["status"] = body.status
     if body.notes is not None:
         update_data["notes"] = body.notes
@@ -293,15 +318,15 @@ async def update_appointment_details(appointment_id: str, body: AppointmentUpdat
 
     if not update_data:
         return {
-            "appointment_id": app["id"],
-            "barber_id": app["barber_id"],
-            "client_id": app["client_id"],
-            "appointment_date": parse_date_str(app["appointment_date"]),
-            "status": app["status"] or "pending",
-            "notes": app["notes"],
-            "start_time": parse_time_str(app["start_time"]),
-            "end_time": parse_time_str(app["end_time"]),
-            "barbershop_id": app["barbershop_id"]
+            "appointment_id": appointment["id"],
+            "barber_id": appointment["barber_id"],
+            "client_id": appointment["client_id"],
+            "appointment_date": parse_date_str(appointment["appointment_date"]),
+            "status": appointment["status"] or "pending",
+            "notes": appointment["notes"],
+            "start_time": parse_time_str(appointment["start_time"]),
+            "end_time": parse_time_str(appointment["end_time"]),
+            "barbershop_id": appointment["barbershop_id"]
         }
 
     updated = await crud_client.update_appointment(appointment_id, update_data)
@@ -322,15 +347,15 @@ async def cancel_appointment(appointment_id: str, current_user: dict = Depends(g
     """
     Cancela o elimina una cita.
     """
-    app = await crud_client.get_appointment(appointment_id)
-    if not app:
+    appointment = await crud_client.get_appointment(appointment_id)
+    if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cita no encontrada."
         )
 
     role = current_user.get("role", "customer").lower()
-    if role == "customer" and app["client_id"] != current_user["id"]:
+    if role == "customer" and appointment["client_id"] != current_user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tiene permisos para cancelar esta cita."
@@ -369,16 +394,16 @@ async def link_service_to_appointment(appointment_id: str, body: AppointmentServ
     Vincula un servicio a una cita.
     """
     # Verify appointment exists
-    app = await crud_client.get_appointment(appointment_id)
-    if not app:
+    appointment = await crud_client.get_appointment(appointment_id)
+    if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cita no encontrada."
         )
 
     # Verify service exists
-    srv = await crud_client.get_service(body.service_id)
-    if not srv:
+    service = await crud_client.get_service(body.service_id)
+    if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Servicio no encontrado."

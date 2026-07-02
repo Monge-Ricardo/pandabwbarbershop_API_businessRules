@@ -63,8 +63,8 @@ async def update_barber_availability(barber_id: str, availability_id: str, body:
     """
     await check_can_manage_availability(current_user, barber_id)
 
-    av = await crud_client.get_availability(availability_id)
-    if not av or av["barber_id"] != barber_id:
+    availability = await crud_client.get_availability(availability_id)
+    if not availability or availability["barber_id"] != barber_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bloque de disponibilidad no encontrado para este barbero."
@@ -82,11 +82,11 @@ async def update_barber_availability(barber_id: str, availability_id: str, body:
 
     if not update_data:
         return {
-            "availability_id": av["id"],
-            "day_of_week": av["day_of_week"],
-            "start_time": parse_time_str(av["start_time"]),
-            "end_time": parse_time_str(av["end_time"]),
-            "is_available": av["is_available"]
+            "availability_id": availability["id"],
+            "day_of_week": availability["day_of_week"],
+            "start_time": parse_time_str(availability["start_time"]),
+            "end_time": parse_time_str(availability["end_time"]),
+            "is_available": availability["is_available"]
         }
 
     updated = await crud_client.update_availability(availability_id, update_data)
@@ -105,8 +105,8 @@ async def delete_barber_availability(barber_id: str, availability_id: str, curre
     """
     await check_can_manage_availability(current_user, barber_id)
 
-    av = await crud_client.get_availability(availability_id)
-    if not av or av["barber_id"] != barber_id:
+    availability = await crud_client.get_availability(availability_id)
+    if not availability or availability["barber_id"] != barber_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bloque de disponibilidad no encontrado para este barbero."

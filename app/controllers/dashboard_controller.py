@@ -1,9 +1,12 @@
+import httpx
 from fastapi import APIRouter, HTTPException, status, Depends, Query
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime, date, time, timedelta
 from app.clients.crud_client import crud_client
 from app.middleware.auth import get_current_user, require_role
 from app.controllers.appointment_controller import parse_time_str, parse_date_str
+
+APPOINTMENT_SLOT_INTERVAL_MINUTES = 30
 
 router = APIRouter(prefix="/api", tags=["Role Dashboards (Owner, Barber, Customer)"])
 
@@ -30,7 +33,7 @@ async def get_barber_barbershop_id(barber_id: str) -> str:
     )
 
 # ========================================================
-# 👑 A. ENDPOINTS DEL DUEÑO (OWNER)
+# 👑 A. OWNER ENDPOINTS
 # ========================================================
 
 @router.put("/owner/barbershop", dependencies=[Depends(require_role(["owner"]))])
@@ -117,14 +120,14 @@ async def owner_patch_appointment_status(appointment_id: str, body: dict, curren
     shop_id = await get_owner_barbershop_id(current_user["id"])
     
     # Verify appointment belongs to owner's shop
-    app = await crud_client.get_appointment(appointment_id)
-    if not app or app["barbershop_id"] != shop_id:
+    appointment = await crud_client.get_appointment(appointment_id)
+    if not appointment or appointment["barbershop_id"] != shop_id:
         raise HTTPException(status_code=404, detail="Cita no encontrada en su barbería.")
         
     return await crud_client.update_appointment(appointment_id, {"status": new_status})
 
 # ========================================================
-# 💈 B. ENDPOINTS DEL BARBERO (BARBER)
+# 💈 B. BARBER ENDPOINTS
 # ========================================================
 
 @router.get("/barber/appointments", dependencies=[Depends(require_role(["barber"]))])
@@ -167,7 +170,7 @@ async def barber_create_product(body: dict, current_user: dict = Depends(get_cur
     )
 
 # ========================================================
-# 👥 C. ENDPOINTS DEL CLIENTE (CUSTOMER)
+# 👥 C. CUSTOMER ENDPOINTS
 # ========================================================
 
 @router.get("/customer/services")
@@ -215,25 +218,25 @@ async def customer_get_available_times(
 
     # 3. Find availability block
     availabilities = await crud_client.list_availabilities(barber_id=barber_id, barbershop_id=shop_id)
-    matching_av = None
-    for av in availabilities:
-        if av["day_of_week"] == day_of_week and av["is_available"]:
-            matching_av = av
+    matching_availability = None
+    for availability in availabilities:
+        if availability["day_of_week"] == day_of_week and availability["is_available"]:
+            matching_availability = availability
             break
             
-    if not matching_av:
+    if not matching_availability:
         return {"date": date, "available_slots": []}
 
-    av_start = parse_time_str(matching_av["start_time"])
-    av_end = parse_time_str(matching_av["end_time"])
+    availability_start = parse_time_str(matching_availability["start_time"])
+    availability_end = parse_time_str(matching_availability["end_time"])
 
     # 4. Fetch existing appointments
     appointments = await crud_client.list_appointments(barber_id=barber_id, appointment_date=date)
     active_appointments = [a for a in appointments if a["status"] != "cancelled"]
 
-    # 5. Generate slots at 30-minute intervals
-    start_dt = datetime.combine(query_date, av_start)
-    end_dt = datetime.combine(query_date, av_end)
+    # 5. Generate slots at APPOINTMENT_SLOT_INTERVAL_MINUTES intervals
+    start_dt = datetime.combine(query_date, availability_start)
+    end_dt = datetime.combine(query_date, availability_end)
     
     slots = []
     current_dt = start_dt
@@ -243,24 +246,53 @@ async def customer_get_available_times(
         
         # Check overlaps
         overlap = False
-        for app in active_appointments:
-            app_start = parse_time_str(app["start_time"])
-            app_end = parse_time_str(app["end_time"])
+        for appointment in active_appointments:
+            appointment_start = parse_time_str(appointment["start_time"])
+            appointment_end = parse_time_str(appointment["end_time"])
             
             # overlap check
-            if slot_start < app_end and app_start < slot_end:
+            if slot_start < appointment_end and appointment_start < slot_end:
                 overlap = True
                 break
                 
         if not overlap:
             slots.append(slot_start.strftime("%H:%M"))
             
-        current_dt += timedelta(minutes=30) # 30 min intervals to choose from
+        current_dt += timedelta(minutes=APPOINTMENT_SLOT_INTERVAL_MINUTES)
 
     return {
         "date": date,
         "available_slots": slots
     }
+
+def _parse_booking_request_times(appointment_date_str: str, start_time_str: str, duration_min: int) -> Tuple[date, time, time]:
+    """Parse date and start/end times from request inputs."""
+    try:
+        app_date = datetime.strptime(appointment_date_str, "%Y-%m-%d").date()
+        parts = start_time_str.split(":")
+        start_time = time(int(parts[0]), int(parts[1]))
+        temp_dt = datetime.combine(app_date, start_time) + timedelta(minutes=duration_min)
+        end_time = temp_dt.time()
+        return app_date, start_time, end_time
+    except (ValueError, IndexError, TypeError) as parse_error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error al parsear fecha u hora: {str(parse_error)}"
+        )
+
+async def _link_service_with_rollback(appointment_id: str, service_id: str) -> None:
+    """Link service to appointment, rollback by deleting appointment on failure."""
+    try:
+        await crud_client.create_appointment_service(
+            appointment_id=appointment_id,
+            service_id=service_id
+        )
+    except (httpx.HTTPStatusError, RuntimeError) as api_error:
+        await crud_client.delete_appointment(appointment_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al vincular el servicio: {str(api_error)}"
+        )
 
 @router.post("/customer/appointments", status_code=status.HTTP_201_CREATED)
 async def customer_book_appointment(body: dict, current_user: dict = Depends(get_current_user)):
@@ -283,17 +315,12 @@ async def customer_book_appointment(body: dict, current_user: dict = Depends(get
     duration_min = int(service["duration_minutes"])
     shop_id = service["barbershop_id"]
 
-    # Parse inputs
-    try:
-        app_date = datetime.strptime(appointment_date_str, "%Y-%m-%d").date()
-        parts = start_time_str.split(":")
-        start_time = time(int(parts[0]), int(parts[1]))
-        
-        # Calculate end time based on service duration
-        temp_dt = datetime.combine(app_date, start_time) + timedelta(minutes=duration_min)
-        end_time = temp_dt.time()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error al parsear fecha u hora: {str(e)}")
+    # Parse inputs (SRP: Parsing responsibility)
+    app_date, start_time, end_time = _parse_booking_request_times(
+        appointment_date_str=appointment_date_str,
+        start_time_str=start_time_str,
+        duration_min=duration_min
+    )
 
     # 1. Validate availability and overlaps (HU21 / HU28)
     # We call our validation function directly
@@ -307,7 +334,7 @@ async def customer_book_appointment(body: dict, current_user: dict = Depends(get
     )
 
     # 2. Create appointment
-    new_app = await crud_client.create_appointment(
+    new_appointment = await crud_client.create_appointment(
         barbershop_id=shop_id,
         client_id=current_user["id"],
         barber_id=barber_id,
@@ -317,22 +344,14 @@ async def customer_book_appointment(body: dict, current_user: dict = Depends(get
         notes=body.get("notes")
     )
 
-    # 3. Link service
-    try:
-        await crud_client.create_appointment_service(
-            appointment_id=new_app["id"],
-            service_id=service_id
-        )
-    except Exception as e:
-        # Rollback
-        await crud_client.delete_appointment(new_app["id"])
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al vincular el servicio: {str(e)}"
-        )
+    # 3. Link service (SRP: Database transaction / rollback responsibility)
+    await _link_service_with_rollback(
+        appointment_id=new_appointment["id"],
+        service_id=service_id
+    )
 
     return {
         "status": "success",
         "message": "Cita agendada de forma correcta",
-        "appointment_id": new_app["id"]
+        "appointment_id": new_appointment["id"]
     }

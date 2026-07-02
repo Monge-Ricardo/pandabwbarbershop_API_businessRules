@@ -144,28 +144,28 @@ async def google_auth(body: GoogleLoginRequest):
             detail="El token de Google no contiene un correo electrónico."
         )
 
-    # Buscar si el usuario ya existe en nuestra base de datos
+    # Check if user already exists in our database
     existing = await crud_client.list_users(email=email)
     
     if existing:
-        # El usuario existe, obtenemos sus datos
+        # User exists, retrieve their profile data
         user_profile = existing[0]
         user_uuid = user_profile["id"]
     else:
-        # El usuario no existe, lo registramos automáticamente con el rol predeterminado de customer
+        # User does not exist, automatically register with default role 'customer'
         user_uuid = str(uuid.uuid4())
-        # Contraseña segura aleatoria para la base de datos auth
+        # Safe random password for auth database
         random_pass = str(uuid.uuid4())
         hashed_pass = hash_password(random_pass)
         
         try:
-            # 1. Crear credenciales en auth schema
+            # 1. Create credentials in auth schema
             await crud_client.create_auth_user(id=user_uuid, email=email, encrypted_password=hashed_pass)
             
-            # 2. Crear perfil en public schema
+            # 2. Create profile in public schema
             user_profile = await crud_client.create_user(id=user_uuid, full_name=name, email=email)
         except Exception as e:
-            # Intentar limpiar en caso de fallo
+            # Try cleaning up on failure
             try:
                 await crud_client.delete_auth_user(user_uuid)
             except Exception:
@@ -175,10 +175,10 @@ async def google_auth(body: GoogleLoginRequest):
                 detail=f"Error durante el registro automático con Google: {str(e)}"
             )
 
-    # Resolver rol (defaults a customer si no tiene barbershop memberships)
+    # Resolve role (defaults to customer if no barbershop memberships exist)
     role = await resolve_user_role(user_uuid)
     
-    # Generar nuestro token local del sistema
+    # Generate our local system token
     token = create_access_token(data={"sub": user_uuid, "role": role})
     
     return {
