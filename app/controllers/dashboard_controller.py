@@ -173,6 +173,27 @@ async def barber_create_product(body: dict, current_user: dict = Depends(get_cur
 # 👥 C. CUSTOMER ENDPOINTS
 # ========================================================
 
+@router.get("/customer/barbers")
+async def customer_list_barbers():
+    """
+    Obtiene la lista de todos los barberos activos en el sistema,
+    resolviendo sus nombres de usuario y las barberías a las que pertenecen.
+    """
+    members = await crud_client.list_members()
+    barber_members = [m for m in members if m["role"].lower() == "barber" and m["status"] == "active"]
+    
+    resolved_barbers = []
+    for m in barber_members:
+        user_profile = await crud_client.get_user(m["user_id"])
+        shop = await crud_client.get_barbershop(m["barbershop_id"])
+        resolved_barbers.append({
+            "id": m["user_id"],
+            "full_name": user_profile["full_name"] if user_profile else "Barbero Desconocido",
+            "barbershop_id": m["barbershop_id"],
+            "barbershop_name": shop["name"] if shop else "Barbería"
+        })
+    return {"data": resolved_barbers}
+
 @router.get("/customer/services")
 async def customer_search_services(barbershop_id: Optional[str] = None):
     """
