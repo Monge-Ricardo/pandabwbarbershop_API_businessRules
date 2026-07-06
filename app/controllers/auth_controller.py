@@ -144,36 +144,53 @@ async def google_auth(body: GoogleLoginRequest):
             detail="El token de Google no contiene un correo electrónico."
         )
 
-    # Check if user already exists in our database
-    existing = await crud_client.list_users(email=email)
+    # Check if user already exists in auth schema
+    auth_user = await crud_client.get_auth_user_by_email(email)
     
-    if existing:
-        # User exists, retrieve their profile data
-        user_profile = existing[0]
-        user_uuid = user_profile["id"]
-    else:
-        # User does not exist, automatically register with default role 'customer'
-        user_uuid = str(uuid.uuid4())
-        # Safe random password for auth database
-        random_pass = str(uuid.uuid4())
-        hashed_pass = hash_password(random_pass)
-        
-        try:
-            # 1. Create credentials in auth schema
-            await crud_client.create_auth_user(id=user_uuid, email=email, encrypted_password=hashed_pass)
-            
-            # 2. Create profile in public schema
+    if auth_user:
+        user_uuid = auth_user["id"]
+        # Check if they have a public profile, if not, create it
+        user_profile = await crud_client.get_user(user_uuid)
+        if not user_profile:
             user_profile = await crud_client.create_user(id=user_uuid, full_name=name, email=email)
-        except Exception as e:
-            # Try cleaning up on failure
+    else:
+        # Check if they exist in public schema (in case of orphan profile)
+        existing_public = await crud_client.list_users(email=email)
+        if existing_public:
+            user_profile = existing_public[0]
+            user_uuid = user_profile["id"]
+            
+            # Create auth credentials since they have profile but no credentials
+            random_pass = str(uuid.uuid4())
+            hashed_pass = hash_password(random_pass)
             try:
-                await crud_client.delete_auth_user(user_uuid)
-            except Exception:
-                pass
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error durante el registro automático con Google: {str(e)}"
-            )
+                await crud_client.create_auth_user(id=user_uuid, email=email, encrypted_password=hashed_pass)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error vinculando credenciales de autenticación: {str(e)}"
+                )
+        else:
+            # Create completely new user
+            user_uuid = str(uuid.uuid4())
+            random_pass = str(uuid.uuid4())
+            hashed_pass = hash_password(random_pass)
+            
+            try:
+                # 1. Create credentials in auth schema
+                await crud_client.create_auth_user(id=user_uuid, email=email, encrypted_password=hashed_pass)
+                # 2. Create profile in public schema
+                user_profile = await crud_client.create_user(id=user_uuid, full_name=name, email=email)
+            except Exception as e:
+                # Clean up auth credentials on failure
+                try:
+                    await crud_client.delete_auth_user(user_uuid)
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error durante el registro automático con Google: {str(e)}"
+                )
 
     # Resolve role (defaults to customer if no barbershop memberships exist)
     role = await resolve_user_role(user_uuid)
