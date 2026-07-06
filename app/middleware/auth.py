@@ -2,38 +2,35 @@ import jwt
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import Header, HTTPException, status, Depends
-from passlib.context import CryptContext
 from app.config import settings
 from app.clients.crud_client import crud_client
 
 import bcrypt
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def hash_password(password: str) -> str:
-    """Hashes a plain text password using bcrypt via passlib."""
-    return pwd_context.hash(password)
+    """Hashes a plain text password using bcrypt."""
+    pw_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pw_bytes, salt)
+    return hashed.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies a plain text password against a hash using passlib."""
+    """Verifies a plain text password against a hash using bcrypt directly."""
     try:
-        # Standardize $2y$ (PHP) to $2b$ for python bcrypt compatibility if needed
-        # passlib usually handles it, but in case of raw backend issues we can do a fallback
-        hash_to_verify = hashed_password
+        pw_bytes = plain_password.encode('utf-8')
+        
+        # Standardize $2y$ (PHP) to $2b$ for python bcrypt compatibility
+        hash_str = hashed_password
         if hashed_password.startswith("$2y$"):
-            hash_to_verify = hashed_password.replace("$2y$", "$2b$", 1)
+            hash_str = hashed_password.replace("$2y$", "$2b$", 1)
         elif hashed_password.startswith("$2a$"):
-            hash_to_verify = hashed_password.replace("$2a$", "$2b$", 1)
+            # Some platforms require $2a$ to be replaced by $2b$
+            hash_str = hashed_password.replace("$2a$", "$2b$", 1)
             
-        return pwd_context.verify(plain_password, hash_to_verify)
+        hash_bytes = hash_str.encode('utf-8')
+        return bcrypt.checkpw(pw_bytes, hash_bytes)
     except Exception:
-        try:
-            # Fallback to direct bcrypt check
-            pw_bytes = plain_password.encode('utf-8')
-            hash_bytes = hashed_password.encode('utf-8')
-            return bcrypt.checkpw(pw_bytes, hash_bytes)
-        except Exception:
-            return False
+        return False
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Generates a secure HS256 JWT access token."""
