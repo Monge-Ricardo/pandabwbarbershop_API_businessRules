@@ -376,3 +376,42 @@ async def customer_book_appointment(body: dict, current_user: dict = Depends(get
         "message": "Cita agendada de forma correcta",
         "appointment_id": new_appointment["id"]
     }
+
+@router.get("/customer/test-setup-availability")
+async def test_setup_availability():
+    """
+    Ruta temporal de prueba para registrar bloques de disponibilidad para todos los barberos
+    para todos los días de la semana (1 al 7) de 08:00 a 20:00.
+    """
+    try:
+        # 1. Obtener todos los miembros
+        members = await crud_client.list_members()
+        barbers = [m for m in members if m.get("role") == "barber"]
+        
+        created = []
+        for barber in barbers:
+            barber_id = barber["user_id"]
+            shop_id = barber["barbershop_id"]
+            for day in range(1, 8):
+                try:
+                    # Check if already exists for this barber and day
+                    existing = await crud_client.list_availabilities(barber_id=barber_id)
+                    day_exists = any(av["day_of_week"] == day for av in existing)
+                    if not day_exists:
+                        av = await crud_client.create_availability(
+                            barbershop_id=shop_id,
+                            barber_id=barber_id,
+                            day_of_week=day,
+                            start_time="08:00:00",
+                            end_time="20:00:00",
+                            is_available=True
+                        )
+                        created.append(f"Creado: Barbero {barber_id} Dia {day}")
+                    else:
+                        created.append(f"Ya existe: Barbero {barber_id} Dia {day}")
+                except Exception as e:
+                    created.append(f"Error Barbero {barber_id} Dia {day}: {str(e)}")
+        return {"status": "success", "message": "Disponibilidades configuradas", "details": created}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error configurando disponibilidades: {str(e)}")
+
