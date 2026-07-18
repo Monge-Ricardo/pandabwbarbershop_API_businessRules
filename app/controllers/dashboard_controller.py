@@ -44,6 +44,14 @@ async def owner_update_barbershop(body: dict, current_user: dict = Depends(get_c
     shop_id = await get_owner_barbershop_id(current_user["id"])
     return await crud_client.update_barbershop(shop_id, body)
 
+@router.get("/owner/barbershop", dependencies=[Depends(require_role(["owner"]))])
+async def owner_get_barbershop(current_user: dict = Depends(get_current_user)):
+    """
+    Obtiene la información de la barbería del dueño autenticado.
+    """
+    shop_id = await get_owner_barbershop_id(current_user["id"])
+    return await crud_client.get_barbershop(shop_id)
+
 @router.post("/owner/barbers", dependencies=[Depends(require_role(["owner"]))])
 async def owner_add_barber(body: dict, current_user: dict = Depends(get_current_user)):
     """
