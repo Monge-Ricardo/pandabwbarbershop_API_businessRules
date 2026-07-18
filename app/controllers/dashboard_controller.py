@@ -52,6 +52,32 @@ async def owner_get_barbershop(current_user: dict = Depends(get_current_user)):
     shop_id = await get_owner_barbershop_id(current_user["id"])
     return await crud_client.get_barbershop(shop_id)
 
+@router.get("/owner/barbers", dependencies=[Depends(require_role(["owner"]))])
+async def owner_list_barbers(current_user: dict = Depends(get_current_user)):
+    """
+    Obtiene la lista de barberos asociados a la barbería del dueño autenticado.
+    """
+    shop_id = await get_owner_barbershop_id(current_user["id"])
+    members = await crud_client.list_members(barbershop_id=shop_id)
+    
+    barber_members = [m for m in members if m["role"].lower() == "barber"]
+    
+    resolved = []
+    for m in barber_members:
+        user_profile = await crud_client.get_user(m["user_id"])
+        resolved.append({
+            "membership_id": m["id"],
+            "member_id": m["id"],
+            "id": m["user_id"],
+            "user_id": m["user_id"],
+            "full_name": user_profile["full_name"] if user_profile else "Barbero Desconocido",
+            "name": user_profile["full_name"] if user_profile else "Barbero Desconocido",
+            "email": user_profile["email"] if user_profile else "",
+            "phone": user_profile["phone"] if user_profile else "",
+            "status": m["status"]
+        })
+    return {"data": resolved}
+
 @router.post("/owner/barbers", dependencies=[Depends(require_role(["owner"]))])
 async def owner_add_barber(body: dict, current_user: dict = Depends(get_current_user)):
     """
