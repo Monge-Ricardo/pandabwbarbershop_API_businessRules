@@ -293,6 +293,9 @@ async def customer_get_available_times(
     start_dt = datetime.combine(query_date, availability_start)
     end_dt = datetime.combine(query_date, availability_end)
     
+    # Get current time in Ecuador (UTC-5)
+    now_ecuador = datetime.utcnow() - timedelta(hours=5)
+    
     slots = []
     current_dt = start_dt
     while current_dt + duration <= end_dt:
@@ -311,7 +314,9 @@ async def customer_get_available_times(
                 break
                 
         if not overlap:
-            slots.append(slot_start.strftime("%H:%M"))
+            slot_datetime = datetime.combine(query_date, slot_start)
+            if slot_datetime >= now_ecuador:
+                slots.append(slot_start.strftime("%H:%M"))
             
         current_dt += timedelta(minutes=APPOINTMENT_SLOT_INTERVAL_MINUTES)
 

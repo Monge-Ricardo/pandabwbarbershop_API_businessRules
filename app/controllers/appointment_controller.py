@@ -102,10 +102,20 @@ async def validate_appointment_rules(
 ):
     """
     Verifica las reglas de negocio críticas para agendar una cita:
-    1. Que el barbero sea un miembro activo de la barbería.
-    2. Que el horario esté dentro de la disponibilidad del barbero (HU21).
-    3. Que no haya colisiones de horario / doble agenda para el barbero (HU28).
+    1. Que la cita no sea en fecha/hora pasada (usando hora de Ecuador UTC-5).
+    2. Que el barbero sea un miembro activo de la barbería.
+    3. Que el horario esté dentro de la disponibilidad del barbero (HU21).
+    4. Que no haya colisiones de horario / doble agenda para el barbero (HU28).
     """
+    from datetime import datetime, timedelta
+    now_ecuador = datetime.utcnow() - timedelta(hours=5)
+    app_datetime = datetime.combine(app_date, start_time)
+    if app_datetime < now_ecuador:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pueden agendar citas en fechas o de horas pasadas."
+        )
+
     await _verify_active_barber_member(barbershop_id=barbershop_id, barber_id=barber_id)
     await _verify_barber_availability(
         barber_id=barber_id,
