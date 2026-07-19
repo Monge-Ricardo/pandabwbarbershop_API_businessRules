@@ -67,6 +67,12 @@ async def login(body: LoginRequest):
     public_profile = await crud_client.get_user(auth_user["id"])
     role = await resolve_user_role(auth_user["id"])
     
+    # Resolve barbershop_id if user has memberships
+    barbershop_id = None
+    memberships = await crud_client.list_members(user_id=auth_user["id"])
+    if memberships:
+        barbershop_id = memberships[0]["barbershop_id"]
+
     # Generate token
     token = create_access_token(data={"sub": auth_user["id"], "role": role})
 
@@ -76,7 +82,8 @@ async def login(body: LoginRequest):
         "user": {
             "id": auth_user["id"],
             "name": public_profile["full_name"] if public_profile else "",
-            "email": auth_user["email"]
+            "email": auth_user["email"],
+            "barbershop_id": barbershop_id
         }
     }
 
@@ -195,6 +202,12 @@ async def google_auth(body: GoogleLoginRequest):
     # Resolve role (defaults to customer if no barbershop memberships exist)
     role = await resolve_user_role(user_uuid)
     
+    # Resolve barbershop_id if user has memberships
+    barbershop_id = None
+    memberships = await crud_client.list_members(user_id=user_uuid)
+    if memberships:
+        barbershop_id = memberships[0]["barbershop_id"]
+
     # Generate our local system token
     token = create_access_token(data={"sub": user_uuid, "role": role})
     
@@ -204,6 +217,7 @@ async def google_auth(body: GoogleLoginRequest):
         "user": {
             "id": user_uuid,
             "name": user_profile.get("full_name") or name,
-            "email": email
+            "email": email,
+            "barbershop_id": barbershop_id
         }
     }
