@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List, Optional
 from datetime import datetime
 from app.clients.crud_client import crud_client
-from app.models.schemas.invitation_schema import InvitationCreate, InvitationResponse
+from app.models.schemas.invitation_schema import InvitationCreate, InvitationResponse, InvitationClaim
 from app.middleware.auth import get_current_user
 from app.controllers.barbershop_controller import check_is_barbershop_owner
 
@@ -119,3 +119,64 @@ async def delete_invitation(shop_id: str, invitation_id: str, current_user: dict
 
     await crud_client.delete_invitation_code(invitation_id)
     return None
+
+@router.post("/invitations/claim", status_code=status.HTTP_200_OK)
+async def claim_invitation(body: InvitationClaim, current_user: dict = Depends(get_current_user)):
+    """
+    Canjea un código de invitación para convertirse en barbero.
+    Asocia el usuario autenticado a la barbería del código con el rol 'barber'.
+    """
+    # 1. Look up the code in persistence API
+    codes = await crud_client.list_invitation_codes(code=body.code)
+    if not codes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El código de invitación no existe."
+        )
+    
+    invitation = codes[0]
+    
+    # 2. Check if code is active
+    if not invitation.get("is_active"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El código de invitación ya no está activo o ya fue utilizado."
+        )
+        
+    # 3. Check expiration date (expires_at)
+    if invitation.get("expires_at"):
+        try:
+            exp_date = datetime.fromisoformat(invitation["expires_at"].replace("Z", "+00:00"))
+            now_naive = datetime.utcnow()
+            exp_naive = exp_date.replace(tzinfo=None)
+            if exp_naive < now_naive:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El código de invitación ha expirado."
+                )
+        except Exception:
+            pass 
+
+    # 4. Create membership as a barber in this barbershop
+    shop_id = invitation["barbershop_id"]
+    
+    existing_memberships = await crud_client.list_members(barbershop_id=shop_id, user_id=current_user["id"])
+    if existing_memberships:
+        member_id = existing_memberships[0]["id"]
+        await crud_client.update_member(member_id, {"role": "barber", "status": "active"})
+    else:
+        await crud_client.create_member(
+            barbershop_id=shop_id,
+            user_id=current_user["id"],
+            role="barber",
+            status="active"
+        )
+        
+    # 5. Deactivate the invitation code (one-time use)
+    await crud_client.update_invitation_code(invitation["id"], {"is_active": False})
+    
+    return {
+        "status": "success",
+        "role": "barber",
+        "barbershop_id": shop_id
+    }
