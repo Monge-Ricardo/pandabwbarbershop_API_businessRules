@@ -73,8 +73,8 @@ class CrudClient:
     async def get_barbershop_by_slug(self, slug: str) -> Optional[Dict[str, Any]]:
         return await self._request("GET", f"/barbershops/slug/{slug}")
 
-    async def create_barbershop(self, name: str, slug: str, description: Optional[str] = None, logo_url: Optional[str] = None, address: Optional[str] = None, phone: Optional[str] = None, email: Optional[str] = None) -> Dict[str, Any]:
-        data = {"name": name, "slug": slug, "description": description, "logo_url": logo_url, "address": address, "phone": phone, "email": email}
+    async def create_barbershop(self, name: str, slug: str, description: Optional[str] = None, logo_url: Optional[str] = None, address: Optional[str] = None, phone: Optional[str] = None, email: Optional[str] = None, latitude: Optional[float] = None, longitude: Optional[float] = None) -> Dict[str, Any]:
+        data = {"name": name, "slug": slug, "description": description, "logo_url": logo_url, "address": address, "phone": phone, "email": email, "latitude": latitude, "longitude": longitude}
         return await self._request("POST", "/barbershops", json=data)
 
     async def update_barbershop(self, shop_id: str, data: Dict[str, Any]) -> Dict[str, Any]:

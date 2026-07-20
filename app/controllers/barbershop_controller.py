@@ -21,7 +21,7 @@ async def check_is_barbershop_owner(user_id: str, barbershop_id: str):
 # --- BARBERSHOP ENDPOINTS ---
 
 @router.get("/barbershops", response_model=List[BarbershopResponse])
-async def list_barbershops(current_user: dict = Depends(get_current_user)):
+async def list_barbershops():
     """
     Lista todas las barberías registradas en la plataforma.
     """
@@ -33,7 +33,6 @@ async def create_barbershop(body: BarbershopCreate, current_user: dict = Depends
     Registra una nueva barbería. 
     Establece automáticamente al creador como el Propietario (Owner).
     """
-    # Create the barbershop
     new_shop = await crud_client.create_barbershop(
         name=body.name,
         slug=body.slug,
@@ -41,7 +40,9 @@ async def create_barbershop(body: BarbershopCreate, current_user: dict = Depends
         logo_url=body.logo_url,
         address=body.address,
         phone=body.phone,
-        email=body.email
+        email=body.email,
+        latitude=body.latitude,
+        longitude=body.longitude
     )
     
     # Auto-assign owner membership

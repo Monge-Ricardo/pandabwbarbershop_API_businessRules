@@ -10,6 +10,8 @@ class BarbershopCreate(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class BarbershopUpdate(BaseModel):
     name: Optional[str] = None
@@ -18,6 +20,8 @@ class BarbershopUpdate(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class BarbershopResponse(BaseModel):
     id: str
@@ -28,6 +32,8 @@ class BarbershopResponse(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     invite_code: Optional[str] = None
     is_active: Optional[bool] = None
     created_at: Optional[datetime] = None
