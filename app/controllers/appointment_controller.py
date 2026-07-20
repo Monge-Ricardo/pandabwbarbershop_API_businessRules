@@ -1,5 +1,11 @@
 import httpx
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    status,
+    Depends,
+    BackgroundTasks,
+)
 from typing import List, Optional
 from datetime import datetime, date, time
 from app.clients.crud_client import crud_client
@@ -8,6 +14,9 @@ from app.models.schemas.appointment_schema import (
 )
 from app.models.schemas.service_schema import ServiceResponse
 from app.middleware.auth import get_current_user
+from app.services.appointment_email_service import (
+    send_appointment_created_email_safely,
+)
 
 router = APIRouter(tags=["Appointments"])
 
@@ -174,8 +183,16 @@ async def list_appointments(
         for a in raw_apps
     ]
 
-@router.post("/appointments", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_appointment(body: AppointmentCreate, current_user: dict = Depends(get_current_user)):
+@router.post(
+    "/appointments",
+    response_model=AppointmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_appointment(
+    body: AppointmentCreate,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Crea una nueva cita (reserva). Valida disponibilidad y colisiones de horarios (HU20 / HU28).
     """
@@ -215,12 +232,95 @@ async def create_appointment(body: AppointmentCreate, current_user: dict = Depen
                 service_id=body.service_id
             )
         except (httpx.HTTPStatusError, RuntimeError) as api_error:
-            # Cleanup appointment on failure to link service
-            await crud_client.delete_appointment(new_appointment["id"])
+            await crud_client.delete_appointment(
+                new_appointment["id"]
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al vincular el servicio de la cita: {str(api_error)}"
+                detail=(
+                    "Error al vincular el servicio de la cita: "
+                    f"{str(api_error)}"
+                )
             )
+
+        customer = await crud_client.get_user(
+            new_appointment["client_id"]
+        )
+
+        barber = await crud_client.get_user(
+            new_appointment["barber_id"]
+        )
+
+        service = (
+            await crud_client.get_service(body.service_id)
+            if body.service_id
+            else None
+        )
+
+        background_tasks.add_task(
+            send_appointment_created_email_safely,
+            customer_email=(customer or {}).get(
+                "email",
+                "",
+            ),
+            customer_name=(customer or {}).get(
+                "full_name",
+                "Cliente",
+            ),
+            appointment_id=new_appointment["id"],
+            appointment_date=parse_date_str(
+                new_appointment["appointment_date"]
+            ),
+            start_time=parse_time_str(
+                new_appointment["start_time"]
+            ),
+            service_name=(service or {}).get(
+                "name",
+                "Servicio de barbería",
+            ),
+            barber_name=(barber or {}).get(
+                "full_name",
+                "Barbero asignado",
+            ),
+        )
+
+        customer = await crud_client.get_user(
+            new_appointment["client_id"]
+        )
+
+        barber = await crud_client.get_user(
+            new_appointment["barber_id"]
+        )
+
+        service = (
+            await crud_client.get_service(body.service_id)
+            if body.service_id
+            else None
+        )
+
+        background_tasks.add_task(
+            send_appointment_created_email_safely,
+            customer_email=(customer or {}).get(
+                "email",
+                "",
+            ),
+            customer_name=(customer or {}).get(
+                "full_name",
+                "Cliente",
+            ),
+            appointment_id=new_appointment["id"],
+            appointment_date=body.appointment_date,
+            start_time=body.start_time,
+            service_name=(service or {}).get(
+                "name",
+                "Servicio de barbería",
+            ),
+            barber_name=(barber or {}).get(
+                "full_name",
+                "Barbero asignado",
+            ),
+        )
 
     return {
         "appointment_id": new_appointment["id"],

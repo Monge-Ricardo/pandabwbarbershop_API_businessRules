@@ -1,10 +1,17 @@
 import httpx
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Header
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    status,
+    Depends,
+    Query,
+)
 from typing import List, Optional, Tuple
 from datetime import datetime, date, time, timedelta
 from app.clients.crud_client import crud_client
 from app.middleware.auth import get_current_user, require_role
 from app.controllers.appointment_controller import parse_time_str, parse_date_str
+
 
 APPOINTMENT_SLOT_INTERVAL_MINUTES = 30
 
