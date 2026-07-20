@@ -5,8 +5,22 @@ from typing import Optional
 from app.clients.crud_client import crud_client
 from app.models.schemas.auth_schema import RegisterRequest, LoginRequest, TokenResponse, GoogleLoginRequest
 from app.middleware.auth import hash_password, verify_password, create_access_token, get_current_user, resolve_user_role
+from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
+from app.config import settings
 
 router = APIRouter(tags=["Authentication & Sessions"])
+
+mail_conf = ConnectionConfig(
+    MAIL_USERNAME = settings.MAIL_USERNAME,
+    MAIL_PASSWORD = settings.MAIL_PASSWORD,
+    MAIL_FROM = settings.MAIL_FROM,
+    MAIL_PORT = settings.MAIL_PORT,
+    MAIL_SERVER = settings.MAIL_SERVER,
+    MAIL_STARTTLS = True,
+    MAIL_SSL_TLS = False,
+    USE_CREDENTIALS = True,
+    VALIDATE_CERTS = True
+)
 
 @router.post("/auth/register", status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest):
@@ -31,6 +45,33 @@ async def register(body: RegisterRequest):
         
         # 2. Create profile in public schema
         profile = await crud_client.create_user(id=user_uuid, full_name=body.name, email=body.email)
+        
+        # Send welcome email asynchronously
+        try:
+            html_content = f"""
+            <html>
+              <body style="font-family: Arial, sans-serif; background-color: #111; color: #fff; padding: 20px;">
+                <div style="max-width: 600px; margin: 0 auto; background-color: #1a1a1a; padding: 30px; border-radius: 8px; border: 1px solid #D4AF37;">
+                  <h2 style="color: #D4AF37; text-align: center;">¡Hola, {body.name}!</h2>
+                  <p style="font-size: 16px; line-height: 1.5; color: #eee;">Te damos la bienvenida a <strong>Panda BW Barbershop</strong>.</p>
+                  <p style="font-size: 14px; color: #ccc;">Tu cuenta ha sido creada exitosamente con el correo: <strong>{body.email}</strong>.</p>
+                  <p style="font-size: 14px; color: #ccc;">Ya puedes iniciar sesión en la aplicación para reservar tu primer servicio.</p>
+                  <hr style="border: 0; border-top: 1px solid #D4AF37; margin: 20px 0;" />
+                  <p style="font-size: 12px; text-align: center; color: #888;">Atentamente,<br/>El equipo de Panda BW Barbershop</p>
+                </div>
+              </body>
+            </html>
+            """
+            message = MessageSchema(
+                subject="¡Bienvenido a Panda BW Barbershop!",
+                recipients=[body.email],
+                body=html_content,
+                subtype=MessageType.html
+            )
+            fm = FastMail(mail_conf)
+            await fm.send_message(message)
+        except Exception as mail_err:
+            print(f"Error al enviar correo de bienvenida: {mail_err}")
         
         return {
             "message": "Usuario registrado exitosamente",
