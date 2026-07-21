@@ -14,7 +14,10 @@ class CrudClient:
                 if response.status_code == 404:
                     return None
                 if response.status_code >= 400:
-                    detail = response.json().get("detail", "Error en API de Datos") if response.content else "Error en API de Datos"
+                    try:
+                        detail = response.json().get("detail", "Error en API de Datos") if response.content else "Error en API de Datos"
+                    except ValueError:
+                        detail = f"Error en API de Datos (Código {response.status_code}): {response.text[:200]}"
                     # We raise a custom exception containing the actual error message
                     raise httpx.HTTPStatusError(detail, request=response.request, response=response)
                 if response.status_code == 204:
