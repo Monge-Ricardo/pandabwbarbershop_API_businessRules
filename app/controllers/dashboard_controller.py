@@ -5,6 +5,7 @@ from fastapi import (
     status,
     Depends,
     Query,
+    Header,
 )
 from typing import List, Optional, Tuple
 from datetime import datetime, date, time, timedelta
