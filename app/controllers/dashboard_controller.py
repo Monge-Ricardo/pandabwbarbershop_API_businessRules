@@ -6,12 +6,16 @@ from fastapi import (
     Depends,
     Query,
     Header,
+    BackgroundTasks,
 )
 from typing import List, Optional, Tuple
 from datetime import datetime, date, time, timedelta
 from app.clients.crud_client import crud_client
 from app.middleware.auth import get_current_user, require_role
 from app.controllers.appointment_controller import parse_time_str, parse_date_str
+from app.services.appointment_email_service import (
+    send_appointment_created_email_safely,
+)
 
 
 APPOINTMENT_SLOT_INTERVAL_MINUTES = 30
@@ -380,7 +384,11 @@ async def _link_service_with_rollback(appointment_id: str, service_id: str) -> N
         )
 
 @router.post("/customer/appointments", status_code=status.HTTP_201_CREATED)
-async def customer_book_appointment(body: dict, current_user: dict = Depends(get_current_user)):
+async def customer_book_appointment(
+    body: dict,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """
     Confirma una reserva de cita para un cliente.
     Realiza todas las validaciones de disponibilidad y conflictos horaria.
@@ -435,10 +443,25 @@ async def customer_book_appointment(body: dict, current_user: dict = Depends(get
         service_id=service_id
     )
 
+    # 4. Schedule the customer email after the appointment and service link exist.
+    barber = await crud_client.get_user(barber_id)
+
+    background_tasks.add_task(
+        send_appointment_created_email_safely,
+        customer_email=current_user.get("email", ""),
+        customer_name=current_user.get("full_name", "Cliente"),
+        appointment_id=new_appointment["id"],
+        appointment_date=app_date,
+        start_time=start_time,
+        service_name=service.get("name", "Servicio de barbería"),
+        barber_name=(barber or {}).get("full_name", "Barbero asignado"),
+    )
+
     return {
         "status": "success",
         "message": "Cita agendada de forma correcta",
-        "appointment_id": new_appointment["id"]
+        "appointment_id": new_appointment["id"],
+        "email_status": "scheduled",
     }
 
 @router.get("/customer/test-setup-availability")
