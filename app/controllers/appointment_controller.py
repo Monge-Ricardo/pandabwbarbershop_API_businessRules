@@ -244,83 +244,38 @@ async def create_appointment(
                 )
             )
 
-        customer = await crud_client.get_user(
-            new_appointment["client_id"]
-        )
+    customer = await crud_client.get_user(
+        new_appointment["client_id"]
+    )
+    barber = await crud_client.get_user(
+        new_appointment["barber_id"]
+    )
+    service = (
+        await crud_client.get_service(body.service_id)
+        if body.service_id
+        else None
+    )
 
-        barber = await crud_client.get_user(
-            new_appointment["barber_id"]
-        )
-
-        service = (
-            await crud_client.get_service(body.service_id)
-            if body.service_id
-            else None
-        )
-
-        background_tasks.add_task(
-            send_appointment_created_email_safely,
-            customer_email=(customer or {}).get(
-                "email",
-                "",
-            ),
-            customer_name=(customer or {}).get(
-                "full_name",
-                "Cliente",
-            ),
-            appointment_id=new_appointment["id"],
-            appointment_date=parse_date_str(
-                new_appointment["appointment_date"]
-            ),
-            start_time=parse_time_str(
-                new_appointment["start_time"]
-            ),
-            service_name=(service or {}).get(
-                "name",
-                "Servicio de barbería",
-            ),
-            barber_name=(barber or {}).get(
-                "full_name",
-                "Barbero asignado",
-            ),
-        )
-
-        customer = await crud_client.get_user(
-            new_appointment["client_id"]
-        )
-
-        barber = await crud_client.get_user(
-            new_appointment["barber_id"]
-        )
-
-        service = (
-            await crud_client.get_service(body.service_id)
-            if body.service_id
-            else None
-        )
-
-        background_tasks.add_task(
-            send_appointment_created_email_safely,
-            customer_email=(customer or {}).get(
-                "email",
-                "",
-            ),
-            customer_name=(customer or {}).get(
-                "full_name",
-                "Cliente",
-            ),
-            appointment_id=new_appointment["id"],
-            appointment_date=body.appointment_date,
-            start_time=body.start_time,
-            service_name=(service or {}).get(
-                "name",
-                "Servicio de barbería",
-            ),
-            barber_name=(barber or {}).get(
-                "full_name",
-                "Barbero asignado",
-            ),
-        )
+    background_tasks.add_task(
+        send_appointment_created_email_safely,
+        customer_email=(customer or {}).get("email", ""),
+        customer_name=(customer or {}).get("full_name", "Cliente"),
+        appointment_id=new_appointment["id"],
+        appointment_date=parse_date_str(
+            new_appointment["appointment_date"]
+        ),
+        start_time=parse_time_str(
+            new_appointment["start_time"]
+        ),
+        service_name=(service or {}).get(
+            "name",
+            "Servicio de barbería",
+        ),
+        barber_name=(barber or {}).get(
+            "full_name",
+            "Barbero asignado",
+        ),
+    )
 
     return {
         "appointment_id": new_appointment["id"],
