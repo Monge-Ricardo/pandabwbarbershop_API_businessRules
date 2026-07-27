@@ -243,16 +243,31 @@ async def customer_list_barbers():
     resolviendo sus nombres de usuario y las barberías a las que pertenecen.
     """
     members = await crud_client.list_members()
-    barber_members = [m for m in members if m["role"].lower() == "barber" and m["status"] == "active"]
-    
+    professional_members = [
+        member
+        for member in members
+        if member.get("status") == "active"
+        and member.get("role", "").lower() in {"barber", "owner"}
+    ]
+
     resolved_barbers = []
-    for m in barber_members:
-        user_profile = await crud_client.get_user(m["user_id"])
-        shop = await crud_client.get_barbershop(m["barbershop_id"])
+    for member in professional_members:
+        # Un Owner aparece como profesional solo cuando configuró disponibilidad
+        # para esa sucursal. Así no se expone automáticamente a todos los dueños.
+        if member.get("role", "").lower() == "owner":
+            owner_availability = await crud_client.list_availabilities(
+                barber_id=member["user_id"],
+                barbershop_id=member["barbershop_id"],
+            )
+            if not owner_availability:
+                continue
+
+        user_profile = await crud_client.get_user(member["user_id"])
+        shop = await crud_client.get_barbershop(member["barbershop_id"])
         resolved_barbers.append({
-            "id": m["user_id"],
+            "id": member["user_id"],
             "full_name": user_profile["full_name"] if user_profile else "Barbero Desconocido",
-            "barbershop_id": m["barbershop_id"],
+            "barbershop_id": member["barbershop_id"],
             "barbershop_name": shop["name"] if shop else "Barbería"
         })
     return {"data": resolved_barbers}

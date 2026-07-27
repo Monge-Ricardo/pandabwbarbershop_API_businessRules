@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from app.clients.crud_client import crud_client
 from app.models.schemas.invitation_schema import InvitationCreate, InvitationResponse, InvitationClaim
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, create_access_token
 from app.controllers.barbershop_controller import check_is_barbershop_owner
 
 router = APIRouter(prefix="/barbershops", tags=["Invitations"])
@@ -175,8 +175,11 @@ async def claim_invitation(body: InvitationClaim, current_user: dict = Depends(g
     # 5. Deactivate the invitation code (one-time use)
     await crud_client.update_invitation_code(invitation["id"], {"is_active": False})
     
+    refreshed_token = create_access_token({"sub": current_user["id"], "role": "barber"})
+
     return {
         "status": "success",
         "role": "barber",
-        "barbershop_id": shop_id
+        "barbershop_id": shop_id,
+        "token": refreshed_token,
     }

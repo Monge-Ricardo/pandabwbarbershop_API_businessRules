@@ -46,10 +46,19 @@ def parse_date_str(d_val) -> date:
 
 async def _verify_active_barber_member(barbershop_id: str, barber_id: str) -> None:
     members = await crud_client.list_members(barbershop_id=barbershop_id, user_id=barber_id)
-    if not members or members[0]["role"].upper() != "BARBER" or members[0]["status"] != "active":
+    active_provider = next(
+        (
+            member
+            for member in members
+            if member.get("status") == "active"
+            and member.get("role", "").upper() in {"BARBER", "OWNER"}
+        ),
+        None,
+    )
+    if not active_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El barbero especificado no es un miembro activo de esta barbería."
+            detail="El profesional especificado no es un miembro activo de esta barbería."
         )
 
 async def _verify_barber_availability(
